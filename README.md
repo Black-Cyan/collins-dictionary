@@ -1,6 +1,15 @@
 English | [简体中文](README.zh-CN.md)
 
+<p align="center">
+  <img src="docs/images/app-icon.png" alt="Collins Dictionary" width="128" />
+</p>
+
 # Collins Dictionary
+
+> www.collinsdictionary.com © HarperCollins Publishers Ltd 2025
+>
+> The above attribution is required by the [Collins API Terms and Conditions](https://blog.collinsdictionary.com/terms-conditions-collins-api/).
+> This application is not promoted, endorsed, or sponsored by HarperCollins Publishers.
 
 [![Release](https://github.com/Black-Cyan/collins-dictionary/actions/workflows/release.yml/badge.svg)](https://github.com/Black-Cyan/collins-dictionary/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/Black-Cyan/collins-dictionary)](https://github.com/Black-Cyan/collins-dictionary/releases/latest)

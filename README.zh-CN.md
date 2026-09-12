@@ -1,6 +1,15 @@
 [English](README.md) | 简体中文
 
+<p align="center">
+  <img src="docs/images/app-icon.png" alt="Collins Dictionary" width="128" />
+</p>
+
 # Collins Dictionary
+
+> www.collinsdictionary.com © HarperCollins Publishers Ltd 2025
+>
+> 上述归属声明系 [Collins API 使用条款](https://blog.collinsdictionary.com/terms-conditions-collins-api/) 所要求。
+> 本应用未获 HarperCollins Publishers 的推广、支持或赞助。
 
 [![Release](https://github.com/Black-Cyan/collins-dictionary/actions/workflows/release.yml/badge.svg)](https://github.com/Black-Cyan/collins-dictionary/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/Black-Cyan/collins-dictionary)](https://github.com/Black-Cyan/collins-dictionary/releases/latest)
