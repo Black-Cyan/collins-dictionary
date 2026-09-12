@@ -1,0 +1,188 @@
+name: Release
+
+# Only a version tag (e.g. v1.0.0) builds the distribution packages.
+# The version itself always comes from Gradle; the tag must match it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Shared unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # gradle.properties is the single version source; it feeds the desktop
+      # packageVersion, the Android versionName/Code and the generated
+      # AppVersion constant. A tag that drifts from it would publish artifacts
+      # whose embedded versions disagree with the release.
+      - name: Verify tag matches Gradle version
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          app_version=$(grep -oP '^appVersion=\K.+' gradle.properties)
+          echo "tag=$v appVersion=$app_version"
+          if [ "$v" != "$app_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match appVersion in gradle.properties ($app_version)"
+            exit 1
+          fi
+      - name: Run JVM unit tests
+        run: ./gradlew :shared:jvmTest --console=plain
+
+  build-desktop:
+    name: Build deb / rpm / tar.gz
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # jpackage needs rpmbuild/fakeroot to produce the RPM on a Debian host.
+      - name: Install RPM packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm fakeroot
+      - name: Build Linux distributions
+        # The JetBrains Runtime toolchain is auto-provisioned by the foojay
+        # resolver; createDistributable produces a JBR-bundled app directory.
+        run: >
+          ./gradlew
+          :desktopApp:packageDeb
+          :desktopApp:packageRpm
+          :desktopApp:createDistributable
+          --console=plain
+      - name: Stage artifacts
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          mkdir -p dist staging
+          cp desktopApp/build/compose/binaries/main/deb/*.deb dist/
+          cp desktopApp/build/compose/binaries/main/rpm/*.rpm dist/
+          # createDistributable writes to binaries/main/app/<packageName>/
+          mv desktopApp/build/compose/binaries/main/app/collins-dictionary \
+            "staging/collins-dictionary-${v}-linux-x64"
+          tar -C staging -czf \
+            "dist/collins-dictionary-${v}-linux-x64.tar.gz" \
+            "collins-dictionary-${v}-linux-x64"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-packages
+          path: dist/*
+
+  build-apk:
+    name: Build signed APK
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # Fail fast with an actionable message instead of publishing an unsigned APK.
+      - name: Verify signing secrets
+        run: |
+          missing=()
+          for s in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!s}" ]; then missing+=("$s"); fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+      # The keystore is decoded straight into the runner temp dir and never
+      # printed or uploaded; it disappears with the runner.
+      - name: Decode release keystore
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Build release APK
+        run: ./gradlew :androidApp:assembleRelease --console=plain
+      - name: Verify APK signature
+        run: |
+          set -euo pipefail
+
+          apk=$(find androidApp/build/outputs/apk/release \
+            -maxdepth 1 \
+            -type f \
+            -name '*.apk' \
+            | head -n 1)
+
+          if [ -z "$apk" ]; then
+            echo "::error::No release APK found"
+            exit 1
+          fi
+
+          apksigner=$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" \
+            -type f \
+            -name apksigner \
+            | sort -V \
+            | tail -n 1)
+
+          if [ -z "$apksigner" ]; then
+            echo "::error::apksigner not found in Android SDK"
+            exit 1
+          fi
+
+          echo "APK: $apk"
+          echo "apksigner: $apksigner"
+          "$apksigner" version
+          "$apksigner" verify --verbose --print-certs "$apk"
+      - name: Stage artifact
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          cp androidApp/build/outputs/apk/release/*.apk \
+            "dist/collins-dictionary-${VERSION#v}.apk"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-package
+          path: dist/*
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-desktop, build-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.deb *.rpm *.tar.gz *.apk > SHA256SUMS.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/*.apk
+            dist/SHA256SUMS.txt
+          generate_release_notes: true

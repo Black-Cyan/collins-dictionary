@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Collins Dictionary
+Comment=Collins English Dictionary desktop client
+Exec=/opt/collins-dictionary/bin/collins-dictionary
+Icon=collins-dictionary
+Terminal=false
+Categories=Education;Literature;Office;Dictionary;
+StartupWMClass=collins-dictionary
